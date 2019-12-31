@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Core/PrecompiledHeader.h"
-
 #include "Assert.h"
 #ifdef ASSERTS_ENABLED
     #include "Core/Env/Types.h"
@@ -12,15 +10,15 @@
     #include "Core/Strings/AStackString.h"
     #include <stdarg.h>
     #include <stdio.h>
-    #if defined( __WINDOWS__ )
-        #include <windows.h>
-    #endif
+#endif
+#if defined( __WINDOWS__ )
+    #include "Core/Env/WindowsHeader.h"
 #endif
 
 // Static
 //------------------------------------------------------------------------------
 #ifdef ASSERTS_ENABLED
-/*static*/ bool AssertHandler::s_ThrowOnAssert( false );
+    /*static*/ AssertHandler::AssertCallback * AssertHandler::s_AssertCallback( nullptr );
 #endif
 
 // NoReturn
@@ -68,13 +66,16 @@ bool IsDebuggerAttached()
             file, line, message );
 
         puts( buffer );
+        fflush( stdout );
+
         #if defined( __WINDOWS__ )
             OutputDebugStringA( buffer );
         #endif
 
-        if ( s_ThrowOnAssert )
+        // Trigger user callback if needed. This may not return.
+        if ( s_AssertCallback )
         {
-            throw "AssertionFailed";
+            (*s_AssertCallback)( buffer );
         }
 
         if ( IsDebuggerAttached() == false )

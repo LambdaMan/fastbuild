@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Core/PrecompiledHeader.h"
-
 #include "PathUtils.h"
 #include "Core/Strings/AStackString.h"
 
@@ -26,17 +24,14 @@
     return false;
 }
 
-// IsfullPath
+// IsFullPath
 //------------------------------------------------------------------------------
 /*static*/ bool PathUtils::IsFullPath( const AString & path )
 {
     #if defined( __WINDOWS__ )
-        // full paths on Windows are in X: format
-        if ( path.GetLength() >= 2 )
-        {
-            return ( path[ 1 ] == ':' );
-        }
-        return false;
+        // full paths on Windows have a drive letter and colon, or are unc
+        return ( ( path.GetLength() >= 2 && path[ 1 ] == ':' ) ||
+                 path.BeginsWith( NATIVE_DOUBLE_SLASH ) );
     #elif defined( __LINUX__ ) || defined( __APPLE__ )
         // full paths on Linux/OSX/IOS begin with a slash
         return path.BeginsWith( NATIVE_SLASH );
@@ -47,7 +42,7 @@
 //------------------------------------------------------------------------------
 /*static*/ bool PathUtils::ArePathsEqual(const AString & cleanPathA, const AString & cleanPathB)
 {
-    #if defined( __LINUX__ ) || defined( __IOS__ )
+    #if defined( __LINUX__ )
         // Case Sensitive
         return ( cleanPathA == cleanPathB );
     #endif
@@ -220,17 +215,47 @@
     const char * pathB = fileName.Get();
     const char * itA = pathA;
     const char * itB = pathB;
-    while ( ( *itA == *itB ) && ( *itA != '\0' ) )
+    char compA = *itA;
+    char compB = *itB;
+
+    #if defined( __WINDOWS__ ) || defined( __OSX__ )
+        // Windows & OSX: Case insensitive
+        if ( ( compA >= 'A' ) && ( compA <= 'Z' ) )
+        {
+            compA = 'a' + ( compA - 'A' );
+        }
+        if ( ( compB >= 'A' ) && ( compB <= 'Z' ) )
+        {
+            compB = 'a' + ( compB - 'A' );
+        }
+    #endif
+
+    while ( ( compA == compB ) && ( compA != '\0' ) )
     {
         const bool dirToken = ( ( *itA == '/' ) || ( *itA == '\\' ) );
         itA++;
+        compA = *itA;
         itB++;
+        compB = *itB;
         if ( dirToken )
         {
             pathA = itA;
             pathB = itB;
         }
+
+        #if defined( __WINDOWS__ ) || defined( __OSX__ )
+            // Windows & OSX: Case insensitive
+            if ( ( compA >= 'A' ) && ( compA <= 'Z' ) )
+            {
+                compA = 'a' + ( compA - 'A' );
+            }
+            if ( ( compB >= 'A' ) && ( compB <= 'Z' ) )
+            {
+                compB = 'a' + ( compB - 'A' );
+            }
+        #endif
     }
+
     const bool hasCommonSubPath = ( pathA != basePath.Get() );
     if ( hasCommonSubPath == false )
     {
@@ -252,7 +277,11 @@
         }
         if ( ( c == '/' ) || ( c == '\\' ) )
         {
-            outRelativeFileName += "..\\";
+            #if defined( __WINDOWS__ )
+                outRelativeFileName += "..\\";
+            #else
+                outRelativeFileName += "../";
+            #endif
         }
         ++pathA;
     }

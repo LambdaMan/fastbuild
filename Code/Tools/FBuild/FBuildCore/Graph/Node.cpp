@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "Node.h"
 #include "FileNode.h"
 
@@ -35,16 +33,20 @@
 #include "Tools/FBuild/FBuildCore/Graph/XCodeProjectNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/MetaData/Meta_AllowNonFile.h"
 #include "Tools/FBuild/FBuildCore/Graph/MetaData/Meta_EmbedMembers.h"
+#include "Tools/FBuild/FBuildCore/Graph/MetaData/Meta_IgnoreForComparison.h"
 #include "Tools/FBuild/FBuildCore/Graph/MetaData/Meta_InheritFromOwner.h"
 #include "Tools/FBuild/FBuildCore/Graph/MetaData/Meta_Name.h"
 #include "Tools/FBuild/FBuildCore/WorkerPool/Job.h"
 
 // Core
 #include "Core/Containers/Array.h"
+#include "Core/Env/Env.h"
 #include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/IOStream.h"
 #include "Core/FileIO/PathUtils.h"
 #include "Core/Math/CRC32.h"
+#include "Core/Process/Atomic.h"
+#include "Core/Process/Mutex.h"
 #include "Core/Profile/Profile.h"
 #include "Core/Reflection/ReflectedProperty.h"
 #include "Core/Strings/AStackString.h"
@@ -78,6 +80,7 @@
     "XCodeProj",
     "Settings",
 };
+static Mutex g_NodeEnvStringMutex;
 
 // Custom MetaData
 //------------------------------------------------------------------------------
@@ -101,6 +104,10 @@ IMetaData & MetaInheritFromOwner()
 {
     return *FNEW( Meta_InheritFromOwner() );
 }
+IMetaData & MetaIgnoreForComparison()
+{
+    return *FNEW( Meta_IgnoreForComparison() );
+}
 
 // Reflection
 //------------------------------------------------------------------------------
@@ -120,8 +127,10 @@ Node::Node( const AString & name, Type type, uint32_t controlFlags )
     , m_Next( nullptr )
     , m_LastBuildTimeMs( 0 )
     , m_ProcessingTime( 0 )
+    , m_CachingTime( 0 )
     , m_ProgressAccumulator( 0 )
     , m_Index( INVALID_NODE_INDEX )
+    , m_Hidden( false )
 {
     SetName( name );
 
@@ -150,7 +159,6 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
     }
 
     // if we don't have a stamp, we are building for the first time
-    // (or we're a node that is built every time)
     if ( m_Stamp == 0 )
     {
         // don't output for file nodes, which are always built
@@ -326,6 +334,20 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
     return false;
 }
 
+// GetLastBuildTime
+//------------------------------------------------------------------------------
+uint32_t Node::GetLastBuildTime() const
+{
+    return AtomicLoadRelaxed( &m_LastBuildTimeMs );
+}
+
+// SetLastBuildTime
+//------------------------------------------------------------------------------
+void Node::SetLastBuildTime( uint32_t ms )
+{
+    AtomicStoreRelaxed( &m_LastBuildTimeMs, ms );
+}
+
 // CreateNode
 //------------------------------------------------------------------------------
 /*static*/ Node * Node::CreateNode( NodeGraph & nodeGraph, Node::Type nodeType, const AString & name )
@@ -354,8 +376,13 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
         case Node::XCODEPROJECT_NODE:   return nodeGraph.CreateXCodeProjectNode( name );
         case Node::SETTINGS_NODE:       return nodeGraph.CreateSettingsNode( name );
         case Node::NUM_NODE_TYPES:      ASSERT( false ); return nullptr;
-        default:                        ASSERT( false ); return nullptr;
     }
+
+    #if defined( __GNUC__ ) || defined( _MSC_VER )
+        // GCC and incorrectly reports reaching end of non-void function (as of GCC 7.3.0)
+        // MSVC incorrectly reports reaching end of non-void function (as of VS 2017)
+        return nullptr;
+    #endif
 }
 
 // Load
@@ -390,6 +417,7 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
 
     // Create node
     Node * n = CreateNode( nodeGraph, (Type)nodeType, name );
+    ASSERT( n );
 
     // Early out for FileNode
     if ( nodeType == Node::FILE_NODE )
@@ -649,6 +677,17 @@ bool Node::Deserialize( NodeGraph & nodeGraph, IOStream & stream )
     while ( currentRI );
 
     return true;
+}
+
+// Migrate
+//------------------------------------------------------------------------------
+/*virtual*/ void Node::Migrate( const Node & oldNode )
+{
+    // Transfer the stamp used to detemine if the node has changed
+    m_Stamp = oldNode.m_Stamp;
+
+    // Transfer previous build costs used for progress estimates
+    m_LastBuildTimeMs = oldNode.m_LastBuildTimeMs;
 }
 
 // Deserialize
@@ -969,10 +1008,7 @@ void Node::ReplaceDummyName( const AString & newName )
     // insert additional tokens
     for ( size_t i=1; i<( numTokens-2 ); ++i )
     {
-        if ( i != 0 )
-        {
-            fixed += ':';
-        }
+        fixed += ':';
         fixed += tokens[ i ];
     }
 
@@ -1071,6 +1107,78 @@ bool Node::InitializePreBuildDependencies( NodeGraph & nodeGraph, const BFFItera
     }
 
     return true;
+}
+
+// GetEnvironmentString
+//------------------------------------------------------------------------------
+/*static*/ const char * Node::GetEnvironmentString( const Array< AString > & envVars,
+                                                    const char * & inoutCachedEnvString )
+{
+    // If we've previously built a custom env string, use it
+    if ( inoutCachedEnvString )
+    {
+        return inoutCachedEnvString;
+    }
+
+    // Do we need a custom env string?
+    if ( envVars.IsEmpty() )
+    {
+        // No - return build-wide environment
+        return FBuild::IsValid() ? FBuild::Get().GetEnvironmentString() : nullptr;
+    }
+
+    // More than one caller could be retrieving the same env string
+    // in some cases. For simplicity, we protect in all cases even
+    // if we could avoid it as the mutex will not be heavily constested.
+    MutexHolder mh( g_NodeEnvStringMutex );
+
+    // Caller owns thr memory
+    inoutCachedEnvString = Env::AllocEnvironmentString( envVars );
+    return inoutCachedEnvString;
+}
+
+// RecordStampFromBuiltFile
+//------------------------------------------------------------------------------
+void Node::RecordStampFromBuiltFile()
+{
+    m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+    ASSERT( m_Stamp != 0 );
+    
+    // On OS X, the 'ar' tool (for making libraries) appears to clamp the
+    // modification time of libraries to whole seconds. On HFS/HFS+ file systems,
+    // this doesn't matter because the resolution of the file system is 1 second.
+    //
+    // As of OS X 10.13 (High Sierra) Apple added a new filesystem (APFS) and
+    // this is the default for all drives on 10.14 (Mojave). This filesystem
+    // supports nanosecond filetime granularity.
+    //
+    // The combination of these things means that on an APFS file system a library
+    // built after an object file can have a time that is older. Because
+    // FASTBuild expects chronologically sensible filetimes, this backwards
+    // time relationship triggers unnecessary builds.
+    //
+    // As a work-around, if we detect that a file has a modification which is
+    // precisely a multiple of 1 second, we manually update the timestamp to
+    // the current time.
+    //
+    // TODO:B Remove this work-around. A planned change to the dependency db
+    // to record times per dependency and see when the differ instead of when
+    // they are more recent will fix this.
+    #if defined( __OSX__ )
+        // For now, only apply the work-around to library nodes
+        if ( GetType() == Node::LIBRARY_NODE )
+        {
+            if ( ( m_Stamp % 1000000000 ) == 0 )
+            {
+                // Set to current time
+                FileIO::SetFileLastWriteTimeToNow( m_Name );
+                
+                // Re-query the time from the file
+                m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+                ASSERT( m_Stamp != 0 );
+            }
+        }
+    #endif
 }
 
 //------------------------------------------------------------------------------

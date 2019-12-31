@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "WorkerBrokerage.h"
 
 // FBuild
@@ -35,8 +33,6 @@ void WorkerBrokerage::Init()
 {
     PROFILE_FUNCTION
 
-    ASSERT( Thread::IsMainThread() );
-
     if ( m_Initialized )
     {
         return;
@@ -51,9 +47,11 @@ void WorkerBrokerage::Init()
     {
         // <path>/<group>/<version>/
         #if defined( __WINDOWS__ )
-            m_BrokerageRoot.Format( "%s\\main\\%u\\", root.Get(), protocolVersion );
+            m_BrokerageRoot.Format( "%s\\main\\%u.windows\\", root.Get(), protocolVersion );
+        #elif defined( __OSX__ )
+            m_BrokerageRoot.Format( "%s/main/%u.osx/", root.Get(), protocolVersion );
         #else
-            m_BrokerageRoot.Format( "%s/main/%u/", root.Get(), protocolVersion );
+            m_BrokerageRoot.Format( "%s/main/%u.linux/", root.Get(), protocolVersion );
         #endif
     }
 

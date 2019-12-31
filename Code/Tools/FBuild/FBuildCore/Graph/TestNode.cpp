@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "TestNode.h"
 
 #include "Tools/FBuild/FBuildCore/FBuild.h"
@@ -13,6 +11,7 @@
 #include "Tools/FBuild/FBuildCore/Graph/DirectoryListNode.h"
 #include "Tools/FBuild/FBuildCore/BFF/Functions/Function.h"
 
+#include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/FileStream.h"
 #include "Core/Math/Conversions.h"
@@ -26,7 +25,6 @@ REFLECT_NODE_BEGIN( TestNode, Node, MetaName( "TestOutput" ) + MetaFile() )
     REFLECT_ARRAY(  m_TestInput,                "TestInput",                MetaOptional() + MetaFile() )
     REFLECT_ARRAY(  m_TestInputPath,            "TestInputPath",            MetaOptional() + MetaPath() )
     REFLECT_ARRAY(  m_TestInputPattern,         "TestInputPattern",         MetaOptional() )
-    REFLECT(        m_TestInputPathRecurse,     "TestInputPathRecurse",     MetaOptional() )
     REFLECT(        m_TestInputPathRecurse,     "TestInputPathRecurse",     MetaOptional() )
     REFLECT_ARRAY(  m_TestInputExcludePath,     "TestInputExcludePath",     MetaOptional() + MetaPath() )
     REFLECT_ARRAY(  m_TestInputExcludedFiles,   "TestInputExcludedFiles",   MetaOptional() + MetaFile( true ) )
@@ -44,13 +42,14 @@ REFLECT_END( TestNode )
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
 TestNode::TestNode()
-    : FileNode( AString::GetEmpty(), Node::FLAG_NO_DELETE_ON_FAIL ) // keep output on test fail
+    : FileNode( AString::GetEmpty(), Node::FLAG_NONE )
     , m_TestExecutable()
     , m_TestArguments()
     , m_TestWorkingDir()
     , m_TestTimeOut( 0 )
     , m_TestAlwaysShowOutput( false )
     , m_TestInputPathRecurse( true )
+    , m_NumTestInputFiles( 0 )
 {
     m_Type = Node::TEST_NODE;
 }
@@ -187,11 +186,6 @@ TestNode::~TestNode() = default;
     uint32_t memOutSize = 0;
     uint32_t memErrSize = 0;
     bool timedOut = !p.ReadAllData( memOut, &memOutSize, memErr, &memErrSize, m_TestTimeOut * 1000 );
-    if ( timedOut )
-    {
-        FLOG_ERROR( "Test timed out after %u s (%s)", m_TestTimeOut, m_TestExecutable.Get() );
-        return NODE_RESULT_FAILED;
-    }
 
     // Get result
     int result = p.WaitForExit();
@@ -200,11 +194,20 @@ TestNode::~TestNode() = default;
         return NODE_RESULT_FAILED;
     }
 
-    if ( ( result != 0 ) || ( m_TestAlwaysShowOutput == true ) )
+    if ( ( timedOut == true ) || ( result != 0 ) || ( m_TestAlwaysShowOutput == true ) )
     {
         // something went wrong, print details
         Node::DumpOutput( job, memOut.Get(), memOutSize );
         Node::DumpOutput( job, memErr.Get(), memErrSize );
+    }
+
+    if ( timedOut == true )
+    {
+        FLOG_ERROR( "Test timed out after %u s (%s)", m_TestTimeOut, m_TestExecutable.Get() );
+    }
+    else if ( result != 0 )
+    {
+        FLOG_ERROR( "Test failed. Error: %s Target: '%s'", ERROR_STR( result ), GetName().Get() );
     }
 
     // write the test output (saved for pass or fail)
@@ -223,15 +226,16 @@ TestNode::~TestNode() = default;
     fs.Close();
 
     // did the test fail?
-    if ( result != 0 )
+    if ( ( timedOut == true ) || ( result != 0 ) )
     {
-        FLOG_ERROR( "Test failed (error %i) '%s'", result, GetName().Get() );
         return NODE_RESULT_FAILED;
     }
 
     // test passed
-    // we only keep the "last modified" time of the test output for passed tests
-    m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+
+    // record new file time
+    RecordStampFromBuiltFile();
+
     return NODE_RESULT_OK;
 }
 
