@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 // FBuildCore
 #include "FBuildOptions.h"
 #include "Tools/FBuild/FBuildCore/FBuildVersion.h"
@@ -12,6 +10,7 @@
 
 // Core
 #include "Core/Env/Env.h"
+#include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/PathUtils.h"
 #include "Core/Math/xxHash.h"
 #include "Core/Tracing/Tracing.h"
@@ -19,7 +18,7 @@
 // system
 #include <stdio.h> // for sscanf
 #if defined( __WINDOWS__ )
-    #include <windows.h> // for QueryDosDeviceA
+    #include "Core/Env/WindowsHeader.h" // for QueryDosDeviceA
 #endif
 
 // CONSTRUCTOR - FBuildOptions
@@ -55,6 +54,8 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
         }
     }
 
+    bool progressOptionSpecified = false;
+
     // Parse options
     for ( int32_t i=1; i<argc; ++i ) // start from 1 to skip exe name
     {
@@ -70,7 +71,12 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
         // options start with a '-'
         if ( thisArg.BeginsWith( '-' ) )
         {
-            if ( thisArg == "-cache" )
+            if ( thisArg == "-continueafterdbmove" )
+            {
+                m_ContinueAfterDBMove = true;
+                continue;
+            }
+            else if ( thisArg == "-cache" )
             {
                 m_UseCacheRead = true;
                 m_UseCacheWrite = true;
@@ -94,8 +100,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-cachetrim" )
             {
                 const int sizeIndex = ( i + 1 );
+                PRAGMA_DISABLE_PUSH_MSVC( 4996 ) // This function or variable may be unsafe...
                 if ( ( sizeIndex >= argc ) ||
-                     ( sscanf( argv[ sizeIndex ], "%u", &m_CacheTrim ) ) != 1 )
+                     ( sscanf( argv[ sizeIndex ], "%u", &m_CacheTrim ) ) != 1 ) // TODO:C Consider using sscanf_s
+                PRAGMA_DISABLE_POP_MSVC // 4996
                 {
                     OUTPUT( "FBuild: Error: Missing or bad <sizeMiB> for '-cachetrim' argument\n" );
                     OUTPUT( "Try \"%s -help\"\n", programName.Get() );
@@ -116,6 +124,11 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-clean" )
             {
                 m_ForceCleanBuild = true;
+                continue;
+            }
+            else if ( thisArg == "-compdb" )
+            {
+                m_GenerateCompilationDatabase = true;
                 continue;
             }
             else if ( thisArg == "-config" )
@@ -165,19 +178,43 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_FixupErrorPaths = true;
                 continue;
             }
+            else if ( thisArg == "-forceremote" )
+            {
+                m_AllowDistributed = true;
+                m_NoLocalConsumptionOfRemoteJobs = true; // ensure all jobs happen on the remote worker
+                m_AllowLocalRace = false;
+                continue;
+            }
             else if ( thisArg == "-help" )
             {
                 DisplayHelp( programName );
                 return OPTIONS_OK_AND_QUIT; // exit app
             }
+            else if ( ( thisArg == "-ide" ) || ( thisArg == "-vs" ) )
+            {
+                m_ShowProgress = false;
+                progressOptionSpecified = true;
+                #if defined( __WINDOWS__ )
+                    m_FixupErrorPaths = true;
+                    m_WrapperMode = WRAPPER_MODE_MAIN_PROCESS;
+                #endif
+                continue;
+            }
+            PRAGMA_DISABLE_PUSH_MSVC( 4996 ) // This function or variable may be unsafe...
             else if ( thisArg.BeginsWith( "-j" ) &&
-                      sscanf( thisArg.Get(), "-j%u", &m_NumWorkerThreads ) == 1 )
+                      sscanf( thisArg.Get(), "-j%u", &m_NumWorkerThreads ) == 1 ) // TODO:C Consider using sscanf_s
+            PRAGMA_DISABLE_POP_MSVC // 4996
             {
                 // only accept within sensible range
                 if ( m_NumWorkerThreads <= 256 )
                 {
                     continue; // 'numWorkers' will contain value now
                 }
+            }
+            else if ( thisArg == "-monitor" )
+            {
+                m_EnableMonitor = true;
+                continue;
             }
             else if ( thisArg == "-nooutputbuffering" )
             {
@@ -188,6 +225,7 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-noprogress" )
             {
                 m_ShowProgress = false;
+                progressOptionSpecified = true;
                 continue;
             }
             else if ( thisArg == "-nostoponerror")
@@ -201,18 +239,26 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_NoSummaryOnError = true;
                 continue;
             }
+            else if ( thisArg == "-nounity" )
+            {
+                m_NoUnity = true;
+                continue;
+            }
+            else if ( thisArg == "-progress" )
+            {
+                m_ShowProgress = true;
+                progressOptionSpecified = true;
+                continue;
+            }
+            else if ( thisArg == "-quiet" )
+            {
+                m_ShowBuildCommands = false;
+                m_ShowInfo = false;
+                continue;
+            }
             else if ( thisArg == "-report" )
             {
                 m_GenerateReport = true;
-                continue;
-            }
-            else if ( thisArg == "-forceremote" )
-            {
-                m_AllowDistributed = true;
-                m_NoLocalConsumptionOfRemoteJobs = true; // ensure all jobs happen on the remote worker
-                m_AllowLocalRace = false;
-                m_UseCacheRead = false;
-                m_UseCacheWrite = false;
                 continue;
             }
             else if ( thisArg == "-showcmds" )
@@ -228,6 +274,12 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-showtargets" )
             {
                 m_DisplayTargetList = true;
+                continue;
+            }
+            else if ( thisArg == "-showalltargets" )
+            {
+                m_DisplayTargetList = true;
+                m_ShowHiddenTargets = true;
                 continue;
             }
             else if ( thisArg == "-summary" )
@@ -246,29 +298,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 DisplayVersion();
                 return OPTIONS_OK_AND_QUIT; // exit app
             }
-            else if ( ( thisArg == "-ide" ) || ( thisArg == "-vs" ) )
-            {
-                m_ShowProgress = false;
-                #if defined( __WINDOWS__ )
-                    m_FixupErrorPaths = true;
-                    m_WrapperMode = WRAPPER_MODE_MAIN_PROCESS;
-                #endif
-                continue;
-            }
-            else if ( thisArg == "-quiet" )
-            {
-                m_ShowBuildCommands = false;
-                m_ShowInfo = false;
-                continue;
-            }
+            // -vs : see -ide
             else if ( thisArg == "-wait" )
             {
                 m_WaitMode = true;
-                continue;
-            }
-            else if ( thisArg == "-monitor" )
-            {
-                m_EnableMonitor = true;
                 continue;
             }
             else if ( thisArg == "-wrapper")
@@ -278,14 +311,14 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 #endif
                 continue;
             }
-            else if ( thisArg == "-wrapperintermediate")
+            else if ( thisArg == "-wrapperintermediate") // Internal use only
             {
                 #if defined( __WINDOWS__ )
                     m_WrapperMode = WRAPPER_MODE_INTERMEDIATE_PROCESS;
                 #endif
                 continue;
             }
-            else if ( thisArg == "-wrapperfinal")
+            else if ( thisArg == "-wrapperfinal") // Internal use only
             {
                 #if defined( __WINDOWS__ )
                     m_WrapperMode = WRAPPER_MODE_FINAL_PROCESS;
@@ -303,6 +336,12 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             // assume target
             m_Targets.Append( thisArg );
         }
+    }
+
+    if ( progressOptionSpecified == false )
+    {
+        // By default show progress bar only if stdout goes to the terminal
+        m_ShowProgress = ( Env::IsStdOutRedirected() == false );
     }
 
     // Default to build "all"
@@ -449,13 +488,15 @@ void FBuildOptions::DisplayHelp( const AString & programName ) const
             " -cachetrim [size] Trim the cache to the given size in MiB.\n"
             " -cacheverbose  Emit details about cache interactions.\n"
             " -clean         Force a clean build.\n"
-            " -config [path] Explicitly specify the config file to use.\n" );
+            " -compdb        Generate JSON compilation database for specified targets.\n"
+            " -config [path] Explicitly specify the config file to use.\n"
+            " -continueafterdbmove Allow builds after a DB move.\n" );
 #ifdef DEBUG
     OUTPUT( " -debug         Break at startup, to attach debugger.\n" );
 #endif
     OUTPUT( " -dist          Allow distributed compilation.\n"
             " -distverbose   Print detailed info for distributed compilation.\n"
-            " -fastcancel    [Experimental] Fast cancellation behavior on buidl failure.\n"
+            " -fastcancel    [Experimental] Fast cancellation behavior on build failure.\n"
             " -fixuperrorpaths Reformat error paths to be Visual Studio friendly.\n"
             " -forceremote   Force distributable jobs to only be built remotely.\n"
             " -help          Show this help.\n"
@@ -464,16 +505,20 @@ void FBuildOptions::DisplayHelp( const AString & programName ) const
             "                -wrapper (Windows)\n"
             " -j[x]          Explicitly set LOCAL worker thread count X, instead of\n"
             "                default of hardware thread count.\n"
+            " -monitor       Emit a machine-readable file while building.\n"
             " -noprogress    Don't show the progress bar while building.\n"
+            " -nounity       [Experimental] Build files individually instead of in Unity.\n"
             " -nostoponerror Don't stop building on first error. Try to build as much\n"
             "                as possible.\n"
             " -nosummaryonerror Hide the summary if the build fails. Implies -summary.\n"
+            " -progress      Show the progress bar while building, even if stdout is redirected.\n"
             " -quiet         Don't show build output.\n"
             " -report        Ouput a detailed report.html at the end of the build.\n"
             "                This will lengthen the total build time.\n"
             " -showcmds      Show command lines used to launch external processes.\n"
             " -showdeps      Show known dependency tree for specified targets.\n"
-            " -showtargets   Display list of primary build targets.\n"
+            " -showtargets   Display list of primary targets, excluding those marked \"Hidden\".\n"
+            " -showalltargets Display list of primary targets, including those marked \"Hidden\".\n"
             " -summary       Show a summary at the end of the build.\n"
             " -verbose       Show detailed diagnostic information. This will slow\n"
             "                down building.\n"
@@ -492,12 +537,12 @@ void FBuildOptions::DisplayHelp( const AString & programName ) const
 void FBuildOptions::DisplayVersion() const
 {
     #ifdef DEBUG
-        #define VERSION_CONFIG " (DEBUG) "
+        #define VERSION_CONFIG "(DEBUG) "
     #else
-        #define VERSION_CONFIG " "
+        #define VERSION_CONFIG ""
     #endif
-    OUTPUT( "FASTBuild - " FBUILD_VERSION_STRING " " FBUILD_VERSION_PLATFORM VERSION_CONFIG " - "
-            "Copyright 2012-2018 Franta Fulin - http://www.fastbuild.org\n" );
+    OUTPUT( "FASTBuild - " FBUILD_VERSION_STRING " " VERSION_CONFIG "- "
+            "Copyright 2012-2019 Franta Fulin - http://www.fastbuild.org\n" );
     #undef VERSION_CONFIG
 }
 

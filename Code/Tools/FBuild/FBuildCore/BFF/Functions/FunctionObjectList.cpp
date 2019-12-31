@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "FunctionObjectList.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
@@ -16,6 +14,9 @@
 
 // Core
 #include "Core/FileIO/PathUtils.h"
+
+// system
+#include <string.h> // for strlen - TODO:C Remove
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
@@ -38,23 +39,11 @@ FunctionObjectList::FunctionObjectList()
     return true;
 }
 
-// Commit
+// CreateNode
 //------------------------------------------------------------------------------
-/*virtual*/ bool FunctionObjectList::Commit( NodeGraph & nodeGraph, const BFFIterator & funcStartIter ) const
+/*virtual*/ Node * FunctionObjectList::CreateNode() const
 {
-    ObjectListNode * objectListNode = nodeGraph.CreateObjectListNode( m_AliasForFunction );
-
-    if ( !PopulateProperties( nodeGraph, funcStartIter, objectListNode ) )
-    {
-        return false;
-    }
-
-    if ( !objectListNode->Initialize( nodeGraph, funcStartIter, this ) )
-    {
-        return false;
-    }
-
-    return true;
+    return FNEW( ObjectListNode );
 }
 
 // CheckCompilerOptions
@@ -128,50 +117,6 @@ bool FunctionObjectList::CheckCompilerOptions( const BFFIterator & iter, const A
     return true;
 }
 
-// GetCompilerNode
-//------------------------------------------------------------------------------
-bool FunctionObjectList::GetCompilerNode( NodeGraph & nodeGraph, const BFFIterator & iter, const AString & compiler, CompilerNode * & compilerNode ) const
-{
-    Node * cn = nodeGraph.FindNode( compiler );
-    compilerNode = nullptr;
-    if ( cn != nullptr )
-    {
-        if ( cn->GetType() == Node::ALIAS_NODE )
-        {
-            AliasNode * an = cn->CastTo< AliasNode >();
-            cn = an->GetAliasedNodes()[ 0 ].GetNode();
-        }
-        if ( cn->GetType() != Node::COMPILER_NODE )
-        {
-            Error::Error_1102_UnexpectedType( iter, this, "Compiler", cn->GetName(), cn->GetType(), Node::COMPILER_NODE );
-            return false;
-        }
-        compilerNode = cn->CastTo< CompilerNode >();
-    }
-    else
-    {
-        // create a compiler node - don't allow distribution
-        // (only explicitly defined compiler nodes can be distributed)
-        // set the default executable path to be the compiler exe directory
-        AStackString<> compilerClean;
-        NodeGraph::CleanPath( compiler, compilerClean );
-        compilerNode = nodeGraph.CreateCompilerNode( compilerClean );
-        VERIFY( compilerNode->GetReflectionInfoV()->SetProperty( compilerNode, "AllowDistribution", false ) );
-        const char * lastSlash = compilerClean.FindLast( NATIVE_SLASH );
-        if ( lastSlash )
-        {
-            AStackString<> executableRootPath( compilerClean.Get(), lastSlash + 1 );
-            VERIFY( compilerNode->GetReflectionInfoV()->SetProperty( compilerNode, "ExecutableRootPath", executableRootPath ) );
-        }
-        if ( !compilerNode->Initialize( nodeGraph, iter, nullptr ) )
-        {
-            return false; // Initialize will have emitted an error
-        }
-    }
-
-    return true;
-}
-
 // CheckMSVCPCHFlags
 //------------------------------------------------------------------------------
 bool FunctionObjectList::CheckMSVCPCHFlags( const BFFIterator & iter,
@@ -194,7 +139,7 @@ bool FunctionObjectList::CheckMSVCPCHFlags( const BFFIterator & iter,
         {
             // Extract filename (and remove quotes if found)
             pchObjectName = token.Get() + 3;
-            pchObjectName.Trim( pchObjectName.BeginsWith( '"' ) ? 1 : 0, pchObjectName.EndsWith( '"' ) ? 1 : 0 );
+            pchObjectName.Trim( pchObjectName.BeginsWith( '"' ) ? 1u : 0u, pchObjectName.EndsWith( '"' ) ? 1u : 0u );
 
             // Auto-generate name?
             if ( pchObjectName == "%3" )
@@ -268,7 +213,7 @@ bool FunctionObjectList::CheckMSVCPCHFlags( const BFFIterator & iter,
 
 // GetExtraOutputPaths
 //------------------------------------------------------------------------------
-void FunctionObjectList::GetExtraOutputPaths( const AString & args, AString & pdbPath, AString & asmPath ) const
+void FunctionObjectList::GetExtraOutputPaths( const AString & args, AString & pdbPath, AString & asmPath )
 {
     // split to individual tokens
     Array< AString > tokens;
@@ -293,7 +238,7 @@ void FunctionObjectList::GetExtraOutputPaths( const AString & args, AString & pd
 
 // GetExtraOutputPath
 //------------------------------------------------------------------------------
-void FunctionObjectList::GetExtraOutputPath( const AString * it, const AString * end, const char * option, AString & path ) const
+/*static*/ void FunctionObjectList::GetExtraOutputPath( const AString * it, const AString * end, const char * option, AString & path )
 {
     const char * bodyStart = it->Get() + strlen( option ) + 1; // +1 for - or /
     const char * bodyEnd = it->GetEnd();
@@ -315,14 +260,19 @@ void FunctionObjectList::GetExtraOutputPath( const AString * it, const AString *
     // Strip quotes
     Args::StripQuotes( bodyStart, bodyEnd, path );
 
-    // If it's not already a path (i.e. includes filename.ext) then
-    // truncate to just the path
-    const char * lastSlash = path.FindLast( '\\' );
-    lastSlash = lastSlash ? lastSlash : path.FindLast( '/' );
-    lastSlash  = lastSlash ? lastSlash : path.Get(); // no slash, means it's just a filename
-    if ( lastSlash != ( path.GetEnd() - 1 ) )
+    // Normalize path
+    if ( PathUtils::IsFolderPath( path ) )
     {
-        path.SetLength( uint32_t(lastSlash - path.Get()) );
+        PathUtils::FixupFolderPath( path );
+    }
+    else
+    {
+        PathUtils::FixupFilePath( path );
+
+        // truncate to just the path
+        const char * lastSlash = path.FindLast( NATIVE_SLASH );
+        lastSlash  = lastSlash ? lastSlash : path.Get(); // no slash, means it's just a filename
+        path.SetLength( uint32_t( lastSlash - path.Get() ) );
     }
 }
 

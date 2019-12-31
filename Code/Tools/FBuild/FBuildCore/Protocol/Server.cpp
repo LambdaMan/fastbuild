@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "Server.h"
 #include "Protocol.h"
 
@@ -17,18 +15,14 @@
 #include "Core/Env/Env.h"
 #include "Core/FileIO/ConstMemoryStream.h"
 #include "Core/FileIO/MemoryStream.h"
+#include "Core/Process/Atomic.h"
 #include "Core/Profile/Profile.h"
 #include "Core/Strings/AStackString.h"
-
-// Defines
-//------------------------------------------------------------------------------
-#define SERVER_STATUS_SEND_FREQUENCY ( 1.0f )
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
 Server::Server( uint32_t numThreadsInJobQueue )
     : m_ShouldExit( false )
-    , m_Exited( false )
     , m_ClientList( 32, true )
 {
     m_JobQueueRemote = FNEW( JobQueueRemote( numThreadsInJobQueue ? numThreadsInJobQueue : Env::GetNumProcessors() ) );
@@ -44,12 +38,9 @@ Server::Server( uint32_t numThreadsInJobQueue )
 //------------------------------------------------------------------------------
 Server::~Server()
 {
-    m_ShouldExit = true;
+    AtomicStoreRelaxed( &m_ShouldExit, true );
     JobQueueRemote::Get().WakeMainThread();
-    while ( m_Exited == false )
-    {
-        Thread::Sleep( 1 );
-    }
+    Thread::WaitForThread( m_Thread );
 
     ShutdownAllConnections();
 
@@ -97,8 +88,8 @@ bool Server::IsSynchingTool( AString & statusStr ) const
             if ( synching )
             {
                 statusStr.Format( "Synchronizing Compiler %2.1f / %2.1f MiB\n",
-                                    (float)synchDone / (float)MEGABYTE,
-                                    (float)synchTotal / (float)MEGABYTE );
+                                    (double)( (float)synchDone / (float)MEGABYTE ),
+                                    (double)( (float)synchTotal / (float)MEGABYTE ) );
                 return true;
             }
         }
@@ -300,8 +291,19 @@ void Server::Process( const ConnectionInfo * connection, const Protocol::MsgConn
         return;
     }
 
+    // Check for matching platform
+    if (msg->GetPlatform() != Env::GetPlatform())
+    {
+        AStackString<> remoteAddr;
+        TCPConnectionPool::GetAddressAsString( connection->GetRemoteAddress(), remoteAddr );
+        FLOG_WARN( "Disconnecting '%s' (%s) due to mismatched platform\n", remoteAddr.Get(), msg->GetHostName() );
+        Disconnect( connection );
+        return;
+    }
+
     // take note of initial status of client
     ClientState * cs = (ClientState *)connection->GetUserData();
+    MutexHolder mh( cs->m_Mutex );
     cs->m_NumJobsAvailable = msg->GetNumJobsAvailable();
     cs->m_HostName = msg->GetHostName();
 }
@@ -312,6 +314,7 @@ void Server::Process( const ConnectionInfo * connection, const Protocol::MsgStat
 {
     // take note of latest status of client
     ClientState * cs = (ClientState *)connection->GetUserData();
+    MutexHolder mh( cs->m_Mutex );
     cs->m_NumJobsAvailable = msg->GetNumJobsAvailable();
 
     // Wake main thread to request jobs
@@ -399,7 +402,7 @@ void Server::Process( const ConnectionInfo * connection, const Protocol::MsgMani
         ToolManifest ** found = m_Tools.FindDeref( toolId );
         ASSERT( found );
         manifest = *found;
-        manifest->Deserialize( ms, true ); // true == remote
+        manifest->DeserializeFromRemote( ms );
     }
 
     // manifest has checked local files, from previous sessions an may
@@ -473,12 +476,12 @@ void Server::CheckWaitingJobs( const ToolManifest * manifest )
         int32_t numJobs = (int32_t)cs->m_WaitingJobs.GetSize();
         for ( int32_t i=( numJobs -1 ); i >= 0; --i )
         {
-            Job * job = cs->m_WaitingJobs[ i ];
+            Job * job = cs->m_WaitingJobs[ (size_t)i ];
             ToolManifest * manifestForThisJob = job->GetToolManifest();
             ASSERT( manifestForThisJob );
             if ( manifestForThisJob == manifest )
             {
-                cs->m_WaitingJobs.EraseIndex( i );
+                cs->m_WaitingJobs.EraseIndex( (size_t)i );
                 JobQueueRemote::Get().QueueJob( job );
                 PROTOCOL_DEBUG( "Server: Job %x can now be started\n", job );
                 #ifdef ASSERTS_ENABLED
@@ -509,25 +512,21 @@ void Server::CheckWaitingJobs( const ToolManifest * manifest )
 //------------------------------------------------------------------------------
 void Server::ThreadFunc()
 {
-    while ( m_ShouldExit == false )
+    while ( AtomicLoadRelaxed( &m_ShouldExit ) == false )
     {
         FinalizeCompletedJobs();
 
         FindNeedyClients();
 
-        SendServerStatus();
-
         JobQueueRemote::Get().MainThreadWait( 100 );
     }
-
-    m_Exited = true;
 }
 
 // FindNeedyClients
 //------------------------------------------------------------------------------
 void Server::FindNeedyClients()
 {
-    if ( m_ShouldExit )
+    if ( AtomicLoadRelaxed( &m_ShouldExit ) )
     {
         return;
     }
@@ -553,8 +552,7 @@ void Server::FindNeedyClients()
         MutexHolder mh2( cs->m_Mutex );
 
         // any jobs requested or in progress reduce the available count
-        int reservedJobs = cs->m_NumJobsRequested +
-                              cs->m_NumJobsActive;
+        int32_t reservedJobs = (int32_t)( cs->m_NumJobsRequested + cs->m_NumJobsActive );
         availableJobs -= reservedJobs;
         if ( availableJobs <= 0 )
         {
@@ -651,42 +649,18 @@ void Server::FinalizeCompletedJobs()
     }
 }
 
-// SendServerStatus
-//------------------------------------------------------------------------------
-void Server::SendServerStatus()
-{
-    PROFILE_FUNCTION
-
-    MutexHolder mh( m_ClientListMutex );
-
-    const ClientState * const * end = m_ClientList.End();
-    for ( ClientState ** it = m_ClientList.Begin(); it !=  end; ++it )
-    {
-        ClientState * cs = *it;
-        MutexHolder mh2( cs->m_Mutex );
-        if ( cs->m_StatusTimer.GetElapsedMS() < Protocol::SERVER_STATUS_FREQUENCY_MS )
-        {
-            continue;
-        }
-        cs->m_StatusTimer.Start();
-
-        Protocol::MsgServerStatus msg;
-        msg.Send( cs->m_Connection );
-    }
-}
-
 // RequestMissingFiles
 //------------------------------------------------------------------------------
 void Server::RequestMissingFiles( const ConnectionInfo * connection, ToolManifest * manifest ) const
 {
     MutexHolder manifestMH( m_ToolManifestsMutex );
 
-    const Array< ToolManifest::File > & files = manifest->GetFiles();
+    const Array< ToolManifestFile > & files = manifest->GetFiles();
     const size_t numFiles = files.GetSize();
     for ( size_t i=0; i<numFiles; ++i )
     {
-        const ToolManifest::File & f = files[ i ];
-        if ( f.m_SyncState == ToolManifest::File::NOT_SYNCHRONIZED )
+        const ToolManifestFile & f = files[ i ];
+        if ( f.GetSyncState() == ToolManifestFile::NOT_SYNCHRONIZED )
         {
             // request this file
             Protocol::MsgRequestFile reqFileMsg( manifest->GetToolId(), (uint32_t)i );

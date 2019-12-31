@@ -3,11 +3,11 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "FunctionSettings.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 #include "Tools/FBuild/FBuildCore/Graph/SettingsNode.h"
+
+#include "Core/Strings/AStackString.h"
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
@@ -42,6 +42,13 @@ FunctionSettings::FunctionSettings()
     }
 
     return settingsNode->Initialize( nodeGraph, funcStartIter, this );
+}
+
+// CreateNode
+//------------------------------------------------------------------------------
+/*virtual*/ Node * FunctionSettings::CreateNode() const
+{
+    return FNEW( SettingsNode );
 }
 
 //------------------------------------------------------------------------------

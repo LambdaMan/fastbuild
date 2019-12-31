@@ -29,12 +29,23 @@ private:
     void EndsWithI() const;
     void Equals() const;
     void Find() const;
+    void FindI() const;
+    void FindLast() const;
+    void FindLastI() const;
     void Format() const;
     void Tokenize() const;
     void PatternMatch() const;
     void PatternMatchI() const;
     void Replace() const;
     void Trim() const;
+    void MoveConstructor() const;
+    void MoveAssignment() const;
+
+    // Helpers
+    template <class SRC, class DST, uint32_t EXPECTED_ALLOCS, class SRC_CAST = SRC>
+    void MoveConstructorHelper() const;
+    template <class SRC, class DST, uint32_t EXPECTED_ALLOCS, class SRC_CAST = SRC>
+    void MoveAssignmentHelper() const;
 };
 
 // Register Tests
@@ -51,12 +62,17 @@ REGISTER_TESTS_BEGIN( TestAString )
     REGISTER_TEST( EndsWithI )
     REGISTER_TEST( Equals )
     REGISTER_TEST( Find )
+    REGISTER_TEST( FindI )
+    REGISTER_TEST( FindLast )
+    REGISTER_TEST( FindLastI )
     REGISTER_TEST( Format )
     REGISTER_TEST( Tokenize )
     REGISTER_TEST( PatternMatch )
     REGISTER_TEST( PatternMatchI )
     REGISTER_TEST( Replace )
     REGISTER_TEST( Trim )
+    REGISTER_TEST( MoveConstructor )
+    REGISTER_TEST( MoveAssignment )
 REGISTER_TESTS_END
 
 // AStringConstructors
@@ -410,6 +426,22 @@ void TestAString::Equals() const
 //------------------------------------------------------------------------------
 void TestAString::Find() const
 {
+    {
+        AStackString<> str( "the quick brown fox jumps over the lazy dog" );
+
+        TEST_ASSERT( str.Find( 't' ) == str.Get() );
+        TEST_ASSERT( str.Find( 't', str.Get() + 1 ) == str.Get() + 31 );
+        TEST_ASSERT( str.Find( 't', str.Get() + 1, str.Get() + 31 ) == nullptr );
+
+        TEST_ASSERT( str.Find( "the" ) == str.Get() );
+        TEST_ASSERT( str.Find( "the", str.Get() + 1 ) == str.Get() + 31 );
+        TEST_ASSERT( str.Find( "the", str.Get() + 1, str.Get() + 31 ) == nullptr );
+
+        TEST_ASSERT( str.Find( AStackString<>( "the" ) ) == str.Get() );
+        TEST_ASSERT( str.Find( AStackString<>( "the" ), str.Get() + 1 ) == str.Get() + 31 );
+        TEST_ASSERT( str.Find( AStackString<>( "the" ), str.Get() + 1, str.Get() + 31 ) == nullptr );
+    }
+
     // BUG: Returning contents past end of string
     {
         AString tmp( "12345678--X---" );
@@ -417,6 +449,73 @@ void TestAString::Find() const
         TEST_ASSERT(tmp.Find('X') == nullptr ); // This was OK
         TEST_ASSERT(tmp.Find('X', tmp.Get() + 8) == nullptr); // This was returning junk data past end of string
     }
+}
+
+// FindI
+//------------------------------------------------------------------------------
+void TestAString::FindI() const
+{
+    AStackString<> str( "ThE qUiCk BrOwN fOx JuMpS oVeR tHe LaZy DoG" );
+
+    TEST_ASSERT( str.FindI( 't' ) == str.Get() );
+    TEST_ASSERT( str.FindI( 't', str.Get() + 1 ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindI( 't', str.Get() + 1, str.Get() + 31 ) == nullptr );
+
+    TEST_ASSERT( str.FindI( "the" ) == str.Get() );
+    TEST_ASSERT( str.FindI( "the", str.Get() + 1 ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindI( "the", str.Get() + 1, str.Get() + 31 ) == nullptr );
+
+    TEST_ASSERT( str.FindI( AStackString<>( "the" ) ) == str.Get() );
+    TEST_ASSERT( str.FindI( AStackString<>( "the" ), str.Get() + 1 ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindI( AStackString<>( "the" ), str.Get() + 1, str.Get() + 31 ) == nullptr );
+}
+
+// FindLast
+//------------------------------------------------------------------------------
+void TestAString::FindLast() const
+{
+    {
+        AStackString<> str( "the quick brown fox jumps over the lazy dog" );
+
+        TEST_ASSERT( str.FindLast( 't' ) == str.Get() + 31 );
+        TEST_ASSERT( str.FindLast( 't', str.Get() + 30 ) == str.Get() );
+        TEST_ASSERT( str.FindLast( 't', str.Get() + 30, str.Get() + 1 ) == nullptr );
+
+        TEST_ASSERT( str.FindLast( "the" ) == str.Get() + 31 );
+        TEST_ASSERT( str.FindLast( "the", str.Get() + 30 ) == str.Get() );
+        TEST_ASSERT( str.FindLast( "the", str.Get() + 30, str.Get() + 1 ) == nullptr );
+
+        TEST_ASSERT( str.FindLast( AStackString<>( "the" ) ) == str.Get() + 31 );
+        TEST_ASSERT( str.FindLast( AStackString<>( "the" ), str.Get() + 30 ) == str.Get() );
+        TEST_ASSERT( str.FindLast( AStackString<>( "the" ), str.Get() + 30, str.Get() + 1 ) == nullptr );
+    }
+
+    // BUG: Returning contents past end of string
+    {
+        AString tmp( "12345678--X---" );
+        tmp.SetLength(8);
+        TEST_ASSERT(tmp.Find('X') == nullptr ); // This was OK
+        TEST_ASSERT(tmp.Find('X', tmp.Get() + 8) == nullptr); // This was returning junk data past end of string
+    }
+}
+
+// FindLastI
+//------------------------------------------------------------------------------
+void TestAString::FindLastI() const
+{
+    AStackString<> str( "ThE qUiCk BrOwN fOx JuMpS oVeR tHe LaZy DoG" );
+
+    TEST_ASSERT( str.FindLastI( 't' ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindLastI( 't', str.Get() + 30 ) == str.Get() );
+    TEST_ASSERT( str.FindLastI( 't', str.Get() + 30, str.Get() + 1 ) == nullptr );
+
+    TEST_ASSERT( str.FindLastI( "the" ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindLastI( "the", str.Get() + 30 ) == str.Get() );
+    TEST_ASSERT( str.FindLastI( "the", str.Get() + 30, str.Get() + 1 ) == nullptr );
+
+    TEST_ASSERT( str.FindLastI( AStackString<>( "the" ) ) == str.Get() + 31 );
+    TEST_ASSERT( str.FindLastI( AStackString<>( "the" ), str.Get() + 30 ) == str.Get() );
+    TEST_ASSERT( str.FindLastI( AStackString<>( "the" ), str.Get() + 30, str.Get() + 1 ) == nullptr );
 }
 
 // Format
@@ -647,6 +746,117 @@ void TestAString::Trim() const
         TEST_ASSERT( test.GetLength() == 5 );
         TEST_ASSERT( test  == "Hello" );
     }
+}
+
+// MoveConstructorHelper
+//------------------------------------------------------------------------------
+template <class SRC, class DST, uint32_t EXPECTED_ALLOCS, class SRC_CAST>
+void TestAString::MoveConstructorHelper() const
+{
+    // Create the source string
+    SRC stringA( "string" );
+
+    // Take note of memory state before
+    TEST_MEMORY_SNAPSHOT( s1 );
+
+    // Move construct destination. SRC_CAST allows us to check AString/AStackString<>
+    // behave the same
+    DST stringB( Move( (SRC_CAST&)( stringA ) ) );
+
+    // Check expected amount of allocs occurred
+    TEST_EXPECT_ALLOCATION_EVENTS( s1, EXPECTED_ALLOCS )
+
+    // Source string should be empty
+    TEST_ASSERT( stringA.IsEmpty() );
+}
+
+// MoveConstructor
+//------------------------------------------------------------------------------
+void TestAString::MoveConstructor() const
+{
+    //                    Src             Dest            Allocs    SrcCast
+    //------------------------------------------------------------------
+    // Moves from heap can be performed
+    MoveConstructorHelper<AString,        AString,        0                >();
+    MoveConstructorHelper<AString,        AStackString<>, 0                >();
+
+    // Moves from stack to stack are copies, but avoid memory allocation
+    MoveConstructorHelper<AStackString<>, AStackString<>, 0                >();
+    MoveConstructorHelper<AStackString<>, AStackString<>, 0,        AString>(); // Src as AString, behave the same
+
+    // Moves from stack to AString need re-allocation and copy
+    MoveConstructorHelper<AStackString<>, AString,        1                >();
+    MoveConstructorHelper<AStackString<>, AString,        1,        AString>(); // Src as AString, behave the same
+}
+
+// MoveAssignmentHelper
+//------------------------------------------------------------------------------
+template <class SRC, class DST, uint32_t EXPECTED_ALLOCS, class SRC_CAST>
+void TestAString::MoveAssignmentHelper() const
+{
+    // Empty destination
+    {
+        // Create the source string
+        SRC stringA( "string" );
+
+        // Create the destination
+        DST stringB;
+
+        // Take note of memory state before
+        TEST_MEMORY_SNAPSHOT( s1 );
+
+        // Move assign. SRC_CAST allows us to check AString/AStackString<> behave the same
+        stringB = Move( (SRC_CAST&)( stringA ) );
+
+        // Check expected amount of allocs occurred
+        TEST_EXPECT_ALLOCATION_EVENTS( s1, EXPECTED_ALLOCS )
+
+        // Source string should be empty
+        TEST_ASSERT( stringA.IsEmpty() );
+    }
+
+    // Non-empty destination (check move doesn't leak destination string memory)
+    {
+        // Take note of memory state before
+        TEST_MEMORY_SNAPSHOT( s1 );
+
+        {
+            // Create the source string
+            SRC stringA( "string" );
+
+            // Create the destination
+            DST stringB;
+            stringB.SetLength( 512 ); // Allocate some memory, even for AStackString<>
+
+            // Move assign. SRC_CAST allows us to check AString/AStackString<> behave the same
+            stringB = Move( (SRC_CAST&)( stringA ) );
+
+            // Source string should be empty
+            TEST_ASSERT( stringA.IsEmpty() );
+        }
+
+        // Check should be no more active allocs in total, even if some allocs occurred
+        TEST_EXPECT_INCREASED_ACTIVE_ALLOCATIONS( s1, 0 )
+    }
+}
+
+// MoveAssignment
+//------------------------------------------------------------------------------
+void TestAString::MoveAssignment() const
+{
+    //                   Src             Dest            Allocs SrcCast
+    //------------------------------------------------------------------
+    // Moves from heap can be performed
+    MoveAssignmentHelper<AString,        AString,        0             >();
+    MoveAssignmentHelper<AString,        AStackString<>, 0             >();
+
+    // Moves from stack to stack are copies, but avoid memory allocation
+    MoveAssignmentHelper<AStackString<>, AStackString<>, 0             >();
+    MoveAssignmentHelper<AStackString<>, AStackString<>, 0,     AString>(); // Src as AString, behave the same
+
+    // Moves from stack to AString need re-allocation and copy
+    MoveAssignmentHelper<AStackString<>, AString,        1             >();
+    MoveAssignmentHelper<AStackString<>, AString,        1,     AString>(); // Src as AString, behave the same
 }
 
 //------------------------------------------------------------------------------

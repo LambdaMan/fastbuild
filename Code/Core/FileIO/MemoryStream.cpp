@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Core/PrecompiledHeader.h"
-
 #include "MemoryStream.h"
 
 #include <memory.h> // for memcpy
@@ -37,6 +35,24 @@ MemoryStream::MemoryStream( size_t initialBufferSize, size_t minGrowthFactor )
 MemoryStream::~MemoryStream()
 {
     FREE( m_Begin );
+}
+
+// Reset
+//------------------------------------------------------------------------------
+void MemoryStream::Reset()
+{
+    m_End = m_Begin;
+}
+
+// Release
+//------------------------------------------------------------------------------
+void * MemoryStream::Release()
+{
+    void * mem = m_Begin;
+    m_Begin = nullptr;
+    m_End = nullptr;
+    m_MaxEnd = nullptr;
+    return mem;
 }
 
 // WriteBuffer
@@ -120,7 +136,7 @@ void MemoryStream::GrowToAccomodate( uint64_t bytesToAccomodate )
     m_Begin = (char *)ALLOC( newCapacity );
     m_End = m_Begin + ( oldEnd - oldBegin );
     m_MaxEnd = m_Begin + newCapacity;
-    memcpy( m_Begin, oldBegin, oldEnd - oldBegin );
+    memcpy( m_Begin, oldBegin, (size_t)( oldEnd - oldBegin ) );
     FREE( oldBegin );
 }
 

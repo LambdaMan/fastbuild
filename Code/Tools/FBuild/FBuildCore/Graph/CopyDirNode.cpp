@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "CopyDirNode.h"
 
 #include "Tools/FBuild/FBuildCore/BFF/Functions/Function.h"
@@ -15,6 +13,7 @@
 #include "Tools/FBuild/FBuildCore/Graph/DirectoryListNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 
+#include "Core/Math/xxHash.h"
 #include "Core/Strings/AStackString.h"
 
 // REFLECTION
@@ -37,7 +36,7 @@ CopyDirNode::CopyDirNode()
 
 // Initialize
 //------------------------------------------------------------------------------
-bool CopyDirNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
+/*virtual*/ bool CopyDirNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -47,8 +46,9 @@ bool CopyDirNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, c
 
     // .CompilerInputPath
     Dependencies sourcePaths;
-    if ( !function->GetDirectoryListNodeList( nodeGraph,
+    if ( !Function::GetDirectoryListNodeList( nodeGraph,
                                               iter,
+                                              function,
                                               m_SourcePaths,
                                               m_SourceExcludePaths,
                                               Array< AString >(),     // Unsupported: Excluded files
@@ -177,42 +177,26 @@ CopyDirNode::~CopyDirNode() = default;
 
 // DoBuild
 //------------------------------------------------------------------------------
-/*virtual*/ Node::BuildResult CopyDirNode::DoBuild( Job * UNUSED( job ) )
+/*virtual*/ Node::BuildResult CopyDirNode::DoBuild( Job * /*job*/ )
 {
-    // consider ourselves to be as recent as the newest file
-    uint64_t timeStamp = 0;
-    const Dependency * const end = m_DynamicDependencies.End();
-    for ( const Dependency * it = m_DynamicDependencies.Begin(); it != end; ++it )
+    if (m_DynamicDependencies.IsEmpty())
     {
-        CopyFileNode * cn = it->GetNode()->CastTo< CopyFileNode >();
-        timeStamp = Math::Max< uint64_t >( timeStamp, cn->GetStamp() );
+        m_Stamp = 1; // Non-zero
     }
-    m_Stamp = timeStamp;
+    else
+    {
+        // Generate stamp
+        Array< uint64_t > stamps( m_DynamicDependencies.GetSize(), false );
+        for ( const Dependency & dep: m_DynamicDependencies )
+        {
+            CopyFileNode * cn = dep.GetNode()->CastTo< CopyFileNode >();
+            ASSERT( cn->GetStamp() );
+            stamps.Append( cn->GetStamp() );
+        }
+        m_Stamp = xxHash::Calc64( &stamps[ 0 ], ( stamps.GetSize() * sizeof( uint64_t ) ) );
+    }
 
     return NODE_RESULT_OK;
-}
-
-// Load
-//------------------------------------------------------------------------------
-/*static*/ Node * CopyDirNode::Load( NodeGraph & nodeGraph, IOStream & stream )
-{
-    NODE_LOAD( AStackString<>, name );
-
-    CopyDirNode * node = nodeGraph.CreateCopyDirNode( name );
-
-    if ( node->Deserialize( nodeGraph, stream ) == false )
-    {
-        return nullptr;
-    }
-    return node;
-}
-
-// Save
-//------------------------------------------------------------------------------
-/*virtual*/ void CopyDirNode::Save( IOStream & stream ) const
-{
-    NODE_SAVE( m_Name );
-    Node::Serialize( stream );
 }
 
 //------------------------------------------------------------------------------

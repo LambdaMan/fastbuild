@@ -3,8 +3,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
-
 #include "BFFIterator.h"
 #include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
 
@@ -54,10 +52,11 @@ void BFFIterator::SkipComment()
 
 // SkipString
 //------------------------------------------------------------------------------
-void BFFIterator::SkipString( char quote )
+void BFFIterator::SkipString()
 {
     // start on open char (first ++ will handle this)
-    ASSERT( *m_Pos == quote );
+    ASSERT( IsAtString() );
+    const char quote = *m_Pos;
 
     while ( !IsAtEnd() )
     {
@@ -191,15 +190,21 @@ bool BFFIterator::ParseToMatchingBrace( char openBrace, char closeBrace )
         }
 
         // hit a string?
-        if ( ( *m_Pos == '\'' ) || ( *m_Pos == '"' ) )
+        if ( IsAtString() )
         {
-            SkipString( *m_Pos );
+            const char quote = *m_Pos;
+            SkipString();
+            if ( *m_Pos != quote )
+            {
+                return false;
+            }
+            continue;
         }
 
         // hit the close brace?
         if ( *m_Pos == closeBrace )
         {
-            return true;
+            return !IsAtEnd();
         }
 
         // a regular charater.... keep searching
@@ -295,6 +300,14 @@ bool BFFIterator::IsAtComment() const
         return true;
     }
     return false;
+}
+
+// IsAtString
+//------------------------------------------------------------------------------
+bool BFFIterator::IsAtString() const
+{
+    const char c = *m_Pos;
+    return ( ( c == '"' ) || ( c == '\'' ) );
 }
 
 // GetPosInfo

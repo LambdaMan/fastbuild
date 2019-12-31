@@ -35,6 +35,9 @@ public:
     static void SetVarStruct( const AString & name,
                               const Array< const BFFVariable * > & members,
                               BFFStackFrame * frame );
+    static void SetVarStruct( const AString & name,
+                              Array<BFFVariable *> && members,
+                              BFFStackFrame * frame );
     static void SetVarArrayOfStructs( const AString & name,
                                       const Array< const BFFVariable * > & structs,
                                       BFFStackFrame * frame );
@@ -54,10 +57,11 @@ public:
     static const BFFVariable * GetVar( const AString & name, BFFStackFrame * frame = nullptr );
 
     // get a variable by name, either user or system
-    static const BFFVariable * GetVarAny( const AString & name );
+    static const BFFVariable * GetVarAny( const AString & nameOnly );
 
     // get all variables at this stack level only
     const Array< const BFFVariable * > & GetLocalVariables() const { RETURN_CONSTIFIED_BFF_VARIABLE_ARRAY( m_Variables ); }
+    Array<BFFVariable *> & GetLocalVariables() { return m_Variables; }
 
     // get a variable at this stack level only
     const BFFVariable * GetLocalVar( const AString & name ) const;

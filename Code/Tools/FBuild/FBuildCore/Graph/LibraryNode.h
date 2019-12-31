@@ -23,15 +23,12 @@ class LibraryNode : public ObjectListNode
     REFLECT_NODE_DECLARE( LibraryNode )
 public:
     LibraryNode();
-    bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function );
-    virtual ~LibraryNode();
+    virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
+    virtual ~LibraryNode() override;
 
     static inline Node::Type GetTypeS() { return Node::LIBRARY_NODE; }
 
     virtual bool IsAFile() const override;
-
-    static Node * Load( NodeGraph & nodeGraph, IOStream & stream );
-    virtual void Save( IOStream & stream ) const override;
 
     enum Flag
     {
@@ -62,10 +59,12 @@ private:
     AString             m_LibrarianOptions;
     AString             m_LibrarianOutput;
     Array< AString >    m_LibrarianAdditionalInputs;
+    Array< AString >    m_Environment;
 
     // Internal State
     uint32_t            m_NumLibrarianAdditionalInputs  = 0;
     uint32_t            m_LibrarianFlags                = 0;
+    mutable const char * m_EnvironmentString            = nullptr;
 };
 
 //------------------------------------------------------------------------------

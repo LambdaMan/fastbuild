@@ -38,39 +38,39 @@ REGISTER_TESTS_END
 //------------------------------------------------------------------------------
 void TestWarnings::WarningsAreShown() const
 {
-    FBuildOptions options;
-    options.m_ConfigFile = "Data/TestWarnings/fbuild.bff";
+    FBuildTestOptions options;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestWarnings/fbuild.bff";
 
     FBuild fBuild( options );
     TEST_ASSERT( fBuild.Initialize() );
 
-    TEST_ASSERT( fBuild.Build( AStackString<>( "Warnings" ) ) );
+    TEST_ASSERT( fBuild.Build( "Warnings" ) );
 }
 
 // PragmaMessageWarningsAreShown
 //------------------------------------------------------------------------------
 void TestWarnings::PragmaMessageWarningsAreShown() const
 {
-    FBuildOptions options;
-    options.m_ConfigFile = "Data/TestWarnings/fbuild.bff";
+    FBuildTestOptions options;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestWarnings/fbuild.bff";
 
     FBuild fBuild( options );
     TEST_ASSERT( fBuild.Initialize() );
 
-    TEST_ASSERT( fBuild.Build( AStackString<>( "PragmaMessage" ) ) );
+    TEST_ASSERT( fBuild.Build( "PragmaMessage" ) );
 }
 
 // ClangMacroExpansion
 //------------------------------------------------------------------------------
 void TestWarnings::ClangMacroExpansion() const
 {
-    FBuildOptions options;
-    options.m_ConfigFile = "Data/TestWarnings/ClangMacroExpansion/fbuild.bff";
+    FBuildTestOptions options;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestWarnings/ClangMacroExpansion/fbuild.bff";
 
     FBuild fBuild( options );
     TEST_ASSERT( fBuild.Initialize() );
 
-    TEST_ASSERT( fBuild.Build( AStackString<>( "ClangMacroExpansion" ) ) );
+    TEST_ASSERT( fBuild.Build( "ClangMacroExpansion" ) );
 }
 
 //------------------------------------------------------------------------------

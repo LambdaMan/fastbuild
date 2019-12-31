@@ -22,6 +22,13 @@ public:
         , m_MaxPos( nullptr )
         , m_FileName( nullptr )
         , m_FileTimeStamp( 0 ) {}
+    BFFIterator( const BFFIterator & other )
+        : m_Pos( other.m_Pos )
+        , m_MinPos( other.m_MinPos )
+        , m_MaxPos( other.m_MaxPos )
+        , m_FileName( other.m_FileName )
+        , m_FileTimeStamp( other.m_FileTimeStamp )
+    {}
     inline BFFIterator( const char * pos, uint32_t dataSize, const char * fileName, uint64_t fileTimeStamp )
             : m_Pos( pos )
             , m_MinPos( pos )
@@ -39,7 +46,7 @@ public:
     char operator *() const { return ( m_Pos < m_MaxPos ) ? *m_Pos : 0; }
     void SkipWhiteSpace();
     void SkipComment();
-    void SkipString( char quote );
+    void SkipString();
     void SkipWhiteSpaceAndComments();
     void SkipVariableName();
     void SkipFunctionName();
@@ -60,6 +67,7 @@ public:
     }
 
     bool IsAtComment() const;
+    bool IsAtString() const;
     bool IsAtWhitespace() const;
     bool IsAtValidVariableNameCharacter() const;
     bool IsAtValidFunctionNameCharacter() const;
